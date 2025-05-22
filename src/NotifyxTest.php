@@ -7,7 +7,7 @@ class NotifyxTest
     public function notifyx()
     {
         $input = file_get_contents('php://input');
-        $pay = new \Liwei\Guotong\Base();
+        $pay = new \Liwei\Guotong\Common();
 
         if($pay->checkSign($input) === false) { // 验证签名
             return false;

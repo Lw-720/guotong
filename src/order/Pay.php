@@ -2,12 +2,26 @@
 
 namespace Liwei\Guotong\order;
 
-use Liwei\Guotong\Base;
-use Liwei\Guotong\Config;
-
-class Pay extends Base
+class Pay
 {
 
+    protected $agetId; // 机构号
+    protected $custId; // 商户号
+    protected $APIURL; // 测试环境
+    protected $WxAppId;  // 微信小程序appid
+//    protected $AsyncNotify;  // 回调地址
+    protected $PublicKey;  // 公钥
+
+
+    public function __construct($config)
+    {
+        $this->agetId = $config['agetId'];
+        $this->custId = $config['custId'];
+        $this->APIURL = $config['APIURL'];
+        $this->WxAppId = $config['WxAppId'];
+//        $this->AsyncNotify = $config['AsyncNotify'];
+        $this->PublicKey = $config['PublicKey'];
+    }
     /**
      * 统一下单
      * @param $pay_type 支付方式 1.微信支付（小程序） 2.支付宝支付 3.银联支付
@@ -25,25 +39,25 @@ class Pay extends Base
             'payWay' => $data['payWay'],
             'ip' => $data['ip'],
             'outTime' => $data['outTime'] ?? 5,  //未传输时默认15，最小1分钟，最大值15分钟，单位（分）
-            'asyncNotify' => $data['asyncNotify'],
             'title' => $data['title'] ?? '', // 订单标题,
-            'wxAppid' => $this->config->WxAppId ?? '', // 微信公众账号app_id 	微信支付必传
+            'wxAppid' => $this->WxAppId ?? '', // 微信公众账号app_id 	微信支付必传
             'traType' => $data['traType'], // 微信支付必传，5公众号 8小程序。（京东白条可传，因白条是基于微信公众号或小程序来跳转白条支付的，未传默认为公众号）
             'zfbappid' => $data['zfbappid'] ?? '', // 支付宝appid 支付宝支付必传
             'qrCode' => $data['qrCode'] ?? '', // 银联支付  交易二维码链接
             'qrCodeType' => $data['qrCodeType'] ?? '', // 银联支付，收款二维码为动态码时，则上送值为0；当收款二维码为静态码时，则上送值为1
             'remark' => $data['remark'] ?? '', // 订单备注
-            'asyncNotify' => $this->config->AsyncNotify . $data['asyncNotify'] ?? '', // 异步通知地址
+            'asyncNotify' => $data['asyncNotify'] ?? '', // 异步通知地址
         ];
-
-
         $response = $this->request($url, $data);
-        
         return $response;
     }
 
 
-
+    /**
+     * B扫C
+     * @param $data
+     * @return mixed
+     */
     public function  scanByMerchant($data)
     {
         
@@ -86,7 +100,12 @@ class Pay extends Base
         return $response;
     }
 
-
+    /**
+     * 获取支付二维码
+     * @param $url
+     * @param $orderno
+     * @return string
+     */
     public function getQrcode($url,$orderno)
     {
         $path = public_path() . 'qrcode';
@@ -147,6 +166,148 @@ class Pay extends Base
             'orderNo' => $orderNo
         ];
         $response = $this->request($url, $data);
+        return $response;
+    }
+
+
+    /**
+     * 虚拟机关联商户号
+     * @return void
+     */
+    public function connectCust($agetId,$custId)
+    {
+        $url = '/yyfsevr/order/connectCust';
+        $data = [
+            'agetId' => $agetId,
+            'custId' => $custId,
+            'opType' => 00, //00新增关联、01删除关联，(未传时默认00)
+        ];
+        $response = $this->request($url, $data);
+        return $response;
+    }
+
+    /**
+     * 获取签名
+     * @param $data
+     * @return string
+     */
+    public function getSign($data)
+    {
+        $arr = $data;
+        ksort($arr);
+        $str = '';
+        foreach ($arr as $k=>$val) {
+            $str .= "&".$k."=".$val;
+        }
+
+        $public_key = trim($this->PublicKey);
+        $sha256 = hash("sha256", trim($str,"&"));
+        $key_pem =
+            "-----BEGIN PUBLIC KEY-----
+" .
+            chunk_split(
+                $public_key,
+                64,
+                "
+"
+            ) .
+            "-----END PUBLIC KEY-----";
+
+        $privateKey = openssl_pkey_get_public($key_pem); //检测是否公钥
+        openssl_public_encrypt($sha256, $sign, $privateKey); //公钥加密
+        $sign = base64_encode($sign);
+        return $sign;
+    }
+
+
+    /**
+     * 验证 sign
+     * @param string $plainText 返回数据报文（JSON 格式字符串）
+     * @param string $publicKey 公钥（Base64 编码）
+     * @return bool
+     */
+    public function checkSign($plainText) {
+        // 将 JSON 转换为关联数组
+        $map = json_decode($plainText, true);
+        if (!is_array($map)) {
+            return false;
+        }
+        ksort($map);
+        $sb = "";
+        $sign = "";
+        foreach ($map as $key => $value) {
+            if ($key === "sign") {
+                $sign = $value;
+                continue;
+            }
+            $sb .= $key . "=" . $value . "&";
+        }
+        // 去掉末尾的 &
+        $res = rtrim($sb, "&");
+        // 计算 SHA256 哈希
+        $sha256 = hash("sha256", $res);
+
+        $decodeSha256 = $this->decrypt($sign);
+        return $sha256 === $decodeSha256;
+    }
+
+
+    public function decrypt($sign)
+    {
+        $RSA_DECRYPT_BLOCK_SIZE = 256;
+        $sign = base64_decode($sign);
+        $data = str_split($sign, $RSA_DECRYPT_BLOCK_SIZE);
+        $key_pem =
+            "-----BEGIN PUBLIC KEY-----
+" .
+            chunk_split(
+                trim($this->PublicKey),
+                64,
+                "
+"
+            ) .
+            "-----END PUBLIC KEY-----"; // 公钥
+        $pubKey = openssl_pkey_get_public($key_pem);
+        $result = "";
+        foreach ($data as $block) {
+            openssl_public_decrypt($block, $dataDecrypt, $pubKey);
+            $result .= $dataDecrypt;
+        }
+        return $dataDecrypt;
+    }
+
+    protected function request($url, $data)
+    {
+        //插入公共参数
+        $postData = [
+            'agetId' => $this->agetId,//星译机构编号
+            'custId' => $this->custId,//星译机构商户号
+            'version' => '1.0.0',//版本号
+            'timeStamp' => date('YmdHis'),//版本号
+        ];
+        $postData = array_merge($postData, $data);
+        //生成签名
+        $postData['sign'] = $this->getSign($postData);
+
+        $ch = curl_init(); //用curl发送数据给api
+        $header = [
+            'content-type:application/json;charset=UTF-8'
+        ];
+        // echo(json_encode($postData));exit;
+//        file_put_contents('pay_log/'.date('YmdHis',time()).'/baoweng'.date('YmdHis',time()). '.log',json_encode($postData));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $header);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_URL, $this->APIURL . $url);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, FALSE);
+        $response = curl_exec($ch);
+        curl_close($ch);
+        $response = urldecode($response);
+
+        $response = json_decode($response, true);
+
         return $response;
     }
 
