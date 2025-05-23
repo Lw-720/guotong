@@ -147,7 +147,7 @@ class Pay
         ];
         
         $response = $this->request($url, $data);
-        // dd($response);exit;
+
         return $response;
     }
 

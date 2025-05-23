@@ -2,12 +2,14 @@
 
 namespace Liwei\Guotong;
 
+use Liwei\Guotong\order\Pay;
+
 class NotifyxTest
 {
     public function notifyx()
     {
         $input = file_get_contents('php://input');
-        $pay = new \Liwei\Guotong\Common();
+        $pay = new Pay();
 
         if($pay->checkSign($input) === false) { // 验证签名
             return false;
